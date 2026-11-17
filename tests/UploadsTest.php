@@ -89,7 +89,6 @@ class UploadsTest extends TestCase
         $upload = Upload::first();
         $this->assertSame(['text.txt'], array_keys($upload->forClaude()));
         $this->assertStringContainsString(Pseudonym::for($this->student), $this->claudeText($upload));
-        $this->actingAs($admin)->get('/uploads')->assertSee('2 faces were found.');
 
         $this->actingAs($admin)->postJson("/uploads/{$upload->id}/share", ['share' => 'image', 'confirm_faces' => true])->assertJson(['waiting' => false]);
         $this->assertSame(['image.jpg', 'text.txt'], array_keys($upload->fresh()->forClaude()));
@@ -148,9 +147,10 @@ class UploadsTest extends TestCase
     {
         $this->actingAs($this->admin())->post('/uploads', ['files' => [UploadedFile::fake()->createWithContent('mine.txt', 'x')]]);
         $other = $this->admin();
-        $this->actingAs($other)->get('/uploads')->assertDontSee('mine.txt');
+        $this->actingAs($other)->post('/uploads/'.Upload::first()->id.'/share', ['share' => 'none'])->assertNotFound();
         $this->actingAs($other)->delete('/uploads/'.Upload::first()->id)->assertNotFound();
-        $this->actingAs(User::factory()->create())->get('/uploads')->assertForbidden();
+        $this->actingAs(User::factory()->create())->post('/uploads', ['files' => [UploadedFile::fake()->createWithContent('a.txt', 'x')]])->assertForbidden();
+        $this->actingAs($other)->get('/uploads')->assertStatus(405);
     }
 
     public function test_chat_messages_carry_their_files_and_deleting_the_chat_deletes_them(): void

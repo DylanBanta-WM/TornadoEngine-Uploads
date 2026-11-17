@@ -7,7 +7,6 @@ use App\Models\User;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use TornadoEngine\Access\Access;
-use TornadoEngine\Nav\Nav;
 
 class UploadsServiceProvider extends ServiceProvider
 {
@@ -31,10 +30,6 @@ class UploadsServiceProvider extends ServiceProvider
         Gate::define('uploads.use', fn (User $user) => (bool) $user->is_admin);
         $this->callAfterResolving(Access::class, function (Access $access) {
             $access->permission('uploads.use', __('Upload files'), 'Uploads');
-        });
-
-        $this->callAfterResolving(Nav::class, function (Nav $nav) {
-            $nav->add(__('Uploads'), 'uploads.index', active: 'uploads.*', order: 410, can: 'uploads.use');
         });
     }
 }

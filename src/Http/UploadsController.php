@@ -7,18 +7,12 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Illuminate\View\View;
 use RuntimeException;
 use TornadoEngine\Uploads\Models\Upload;
 use TornadoEngine\Uploads\Uploads;
 
 class UploadsController extends Controller
 {
-    public function index(Request $request): View
-    {
-        return view('uploads::index', ['uploads' => Upload::where('user_id', $request->user()->id)->latest('id')->get()]);
-    }
-
     public function store(Request $request, Uploads $uploads): JsonResponse|RedirectResponse
     {
         $request->validate([
