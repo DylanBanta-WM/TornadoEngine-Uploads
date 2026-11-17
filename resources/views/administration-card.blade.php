@@ -36,7 +36,7 @@
         @csrf
         <div class="flex-1">
             <x-input-label for="logo" :value="__('Add a logo')" />
-            <input id="logo" name="logo" type="file" accept="image/*" required class="mt-1 block w-full text-base text-gray-700 dark:text-gray-300 file:me-3 file:min-h-11 file:rounded-md file:border-0 file:bg-gray-100 dark:file:bg-gray-700 file:px-4 file:font-medium file:text-gray-800 dark:file:text-gray-200">
+            <x-file-input id="logo" name="logo" accept="image/*" required class="mt-1" />
             <x-input-error :messages="$errors->get('logo')" class="mt-2" />
         </div>
         <x-primary-button class="justify-center">{{ __('Add') }}</x-primary-button>

@@ -17,13 +17,13 @@
         "tornado": {
             "name": "Uploads",
             "prompt": "Files people attach are copies made for you: their text with student information replaced by the broker, and images with it covered. Never look for the originals. Other modules accept uploads through route('uploads.store').",
-            "core": ">=0.21",
+            "core": ">=0.23",
             "core-module": true,
             "provider": "TornadoEngine\\Uploads\\UploadsServiceProvider",
             "settings": "/administration/uploads"
         },
         "branch-alias": {
-            "dev-main": "0.4.x-dev"
+            "dev-main": "0.5.x-dev"
         }
     }
 }
