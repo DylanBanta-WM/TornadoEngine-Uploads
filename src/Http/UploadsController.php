@@ -7,7 +7,9 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Storage;
 use RuntimeException;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use TornadoEngine\Uploads\Models\Upload;
 use TornadoEngine\Uploads\Uploads;
 
@@ -18,13 +20,13 @@ class UploadsController extends Controller
         $request->validate([
             'files' => ['required', 'array', 'max:20'],
             'files.*' => ['file', 'max:'.(Uploads::maxMb() * 1024)],
-            'share' => ['nullable', 'in:'.implode(',', Uploads::SHARES)],
+            'student' => ['required', 'boolean'],
         ], ['files.*.max' => __('Files can be up to :size MB.', ['size' => Uploads::maxMb()]), 'files.*.uploaded' => __('Files can be up to :size MB.', ['size' => Uploads::maxMb()])]);
 
         $stored = [];
         try {
             foreach ($request->file('files') as $file) {
-                $stored[] = $uploads->store($file, $request->user(), (string) $request->input('share', 'text'));
+                $stored[] = $uploads->store($file, $request->user(), $request->boolean('student'));
             }
         } catch (RuntimeException $e) {
             return $request->expectsJson() ? response()->json(['message' => $e->getMessage()], 422) : back()->withErrors(['files' => $e->getMessage()]);
@@ -35,13 +37,22 @@ class UploadsController extends Controller
             : back()->with('uploads_status', trans_choice('Uploaded :count file.|Uploaded :count files.', count($stored), ['count' => count($stored)]));
     }
 
-    public function share(Request $request, Upload $upload, Uploads $uploads): JsonResponse|RedirectResponse
+    /** Faces and logos found in an image: cover them, or leave them. */
+    public function review(Request $request, Upload $upload, Uploads $uploads): JsonResponse|RedirectResponse
     {
         $this->own($request, $upload);
-        $data = $request->validate(['share' => ['required', 'in:'.implode(',', Uploads::SHARES)]]);
-        $uploads->share($upload, $data['share'], $request->boolean('confirm_faces'));
+        $uploads->review($upload, $request->boolean('cover'));
 
         return $request->expectsJson() ? response()->json($this->json($upload->fresh())) : back();
+    }
+
+    /** For the uploader: the image with what's covered, and (until they decide) red boxes round faces and logos. */
+    public function preview(Request $request, Upload $upload, Uploads $uploads): BinaryFileResponse
+    {
+        $this->own($request, $upload);
+        abort_unless(is_file($path = $uploads->previewPath($upload)), 404);
+
+        return response()->file($path, ['Cache-Control' => 'private, no-store']);
     }
 
     public function destroy(Request $request, Upload $upload, Uploads $uploads): JsonResponse|RedirectResponse
@@ -60,6 +71,29 @@ class UploadsController extends Controller
         return back()->with('uploads_status', __('Saved.'));
     }
 
+    public function addLogo(Request $request, Uploads $uploads): RedirectResponse
+    {
+        $request->validate(['logo' => ['required', 'image', 'max:10240']]);
+        $uploads->addLogo($request->file('logo'));
+
+        return back()->with('uploads_status', __('Logo added.'));
+    }
+
+    public function logo(string $logo): BinaryFileResponse
+    {
+        abort_unless(preg_match('/^[A-Za-z0-9]+\.[a-z]+$/', $logo) && Storage::disk('uploads')->exists('logos/'.$logo), 404);
+
+        return response()->file(Storage::disk('uploads')->path('logos/'.$logo));
+    }
+
+    public function removeLogo(string $logo): RedirectResponse
+    {
+        abort_unless(preg_match('/^[A-Za-z0-9]+\.[a-z]+$/', $logo), 404);
+        Storage::disk('uploads')->delete('logos/'.$logo);
+
+        return back()->with('uploads_status', __('Logo removed.'));
+    }
+
     private function own(Request $request, Upload $upload): void
     {
         abort_unless($upload->user_id === $request->user()->id, 404);
@@ -71,14 +105,17 @@ class UploadsController extends Controller
         return [
             'id' => $upload->id,
             'name' => $upload->name,
-            'share' => $upload->share,
+            'student' => $upload->student,
             'image' => $upload->isImage(),
-            'faces' => $upload->faces,
             'text' => $upload->has_text,
-            'waiting' => $upload->waitingForFaces(),
+            'waiting' => $upload->waiting(),
+            'faces' => count($upload->findings['faces'] ?? []),
+            'logos' => count($upload->findings['logos'] ?? []),
+            'covered' => $upload->covered,
             'error' => $upload->error,
+            'preview' => $upload->isImage() && is_file(app(Uploads::class)->previewPath($upload)) ? route('uploads.preview', $upload).'?v='.$upload->updated_at?->timestamp : null,
             'url' => [
-                'share' => route('uploads.share', $upload),
+                'review' => route('uploads.review', $upload),
                 'destroy' => route('uploads.destroy', $upload),
             ],
         ];

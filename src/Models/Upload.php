@@ -10,11 +10,11 @@ use TornadoEngine\Uploads\Uploads;
 
 class Upload extends Model
 {
-    protected $fillable = ['user_id', 'name', 'mime', 'size', 'path', 'share', 'faces', 'faces_confirmed', 'has_text', 'error', 'source', 'reference'];
+    protected $fillable = ['user_id', 'name', 'mime', 'size', 'path', 'share', 'student', 'findings', 'answered', 'cover', 'covered', 'has_text', 'error', 'source', 'reference'];
 
     protected function casts(): array
     {
-        return ['faces_confirmed' => 'boolean', 'has_text' => 'boolean', 'size' => 'integer', 'faces' => 'integer'];
+        return ['student' => 'boolean', 'findings' => 'array', 'answered' => 'boolean', 'cover' => 'boolean', 'covered' => 'integer', 'has_text' => 'boolean', 'size' => 'integer'];
     }
 
     public function user(): BelongsTo
@@ -27,10 +27,10 @@ class Upload extends Model
         return in_array(strtolower(pathinfo($this->name, PATHINFO_EXTENSION)), Uploads::IMAGES, true);
     }
 
-    /** The image is held back: a face was found (or it couldn't be checked) and that hasn't been confirmed. */
-    public function waitingForFaces(): bool
+    /** Faces or district logos were found in the image, and the uploader hasn't said whether to cover them. */
+    public function waiting(): bool
     {
-        return $this->share === 'image' && $this->faces !== 0 && ! $this->faces_confirmed;
+        return $this->isImage() && ! $this->answered && (($this->findings['faces'] ?? []) !== [] || ($this->findings['logos'] ?? []) !== []);
     }
 
     /** @return array<string, string> what Claude can read, name => path in the harness */
@@ -44,12 +44,12 @@ class Upload extends Model
     {
         $name = app(Broker::class)->filter($this->name);
         $files = $this->forClaude();
-
-        return '- '.$name.': '.match (true) {
-            $this->share === 'none' => 'not given to you (it has student information)',
-            $this->waitingForFaces() && ! $files => 'not given to you yet (waiting for them to confirm the image)',
-            ! $files => 'no text could be read from it',
-            default => implode(', ', $files).($this->waitingForFaces() ? ' (the image itself is waiting for them to confirm it)' : ''),
+        $note = match (true) {
+            $this->waiting() => ' (the image itself is waiting for them to check it)',
+            $this->covered > 0 => ' (parts of the image are covered in black)',
+            default => '',
         };
+
+        return '- '.$name.': '.($files ? implode(', ', $files).$note : 'no text could be read from it'.$note);
     }
 }

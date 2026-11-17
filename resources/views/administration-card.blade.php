@@ -1,3 +1,5 @@
+@php($logos = app(\TornadoEngine\Uploads\Uploads::class)->logoFiles())
+
 <x-settings-card :title="__('Uploads')">
     @if (session('uploads_status'))
         <p class="text-green-700 dark:text-green-400">{{ session('uploads_status') }}</p>
@@ -13,5 +15,29 @@
             <x-input-error :messages="$errors->get('max_mb')" class="mt-2" />
         </div>
         <x-primary-button class="justify-center">{{ __('Save') }}</x-primary-button>
+    </form>
+</x-settings-card>
+
+<x-settings-card :title="__('Logos to look for in images')">
+    @if ($logos)
+        <ul class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            @foreach ($logos as $logo)
+                <li class="space-y-2 rounded-md border border-gray-200 dark:border-gray-700 p-2">
+                    <img src="{{ route('uploads.logos.show', basename($logo)) }}" alt="" class="mx-auto h-20 object-contain">
+                    <x-confirm :action="route('uploads.logos.remove', basename($logo))" method="DELETE" :message="__('Remove this logo?')" :confirm="__('Remove')" danger>
+                        <x-slot name="trigger"><button type="button" class="min-h-11 w-full text-sm font-medium text-red-700 dark:text-red-400">{{ __('Remove') }}</button></x-slot>
+                    </x-confirm>
+                </li>
+            @endforeach
+        </ul>
+    @endif
+    <form method="POST" action="{{ route('uploads.logos.add') }}" enctype="multipart/form-data" class="flex flex-col gap-3 sm:flex-row sm:items-end">
+        @csrf
+        <div class="flex-1">
+            <x-input-label for="logo" :value="__('Add a logo')" />
+            <input id="logo" name="logo" type="file" accept="image/*" required class="mt-1 block w-full text-base text-gray-700 dark:text-gray-300 file:me-3 file:min-h-11 file:rounded-md file:border-0 file:bg-gray-100 dark:file:bg-gray-700 file:px-4 file:font-medium file:text-gray-800 dark:file:text-gray-200">
+            <x-input-error :messages="$errors->get('logo')" class="mt-2" />
+        </div>
+        <x-primary-button class="justify-center">{{ __('Add') }}</x-primary-button>
     </form>
 </x-settings-card>

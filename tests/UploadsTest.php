@@ -25,13 +25,16 @@ class UploadsTest extends TestCase
 
     private string $student = 'annabel.quince@students.school.test';
 
+    /** @var list<array> boxes each render was asked to draw */
+    private array $rendered = [];
+
     protected function setUp(): void
     {
         parent::setUp();
         Storage::fake('uploads');
         config(['uploads.require_volume' => false]);
         Setting::put('broker.refreshed_at', now()->toIso8601String());
-        Person::create(['kind' => 'student', 'email' => $this->student, 'pseudonym' => Pseudonym::for($this->student), 'values' => [[$this->student, 'email'], ['Annabel Quince', 'name']]]);
+        Person::create(['kind' => 'student', 'email' => $this->student, 'pseudonym' => Pseudonym::for($this->student), 'values' => [[$this->student, 'email'], ['Annabel Quince', 'name'], ['Annabel', 'given'], ['Quince', 'family']]]);
         app(Filter::class)->forget();
     }
 
@@ -51,10 +54,32 @@ class UploadsTest extends TestCase
         return (string) @file_get_contents(app(Uploads::class)->dir($upload).'/text.txt');
     }
 
+    /** A screenshot whose OCR finds the student's name, and the given faces. */
+    private function fakeImageTools(string $faces = '[]', string $logos = '[]'): void
+    {
+        $tsv = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+            ."5\t1\t1\t1\t1\t1\t20\t30\t130\t24\t96\tStudent:\n"
+            ."5\t1\t1\t1\t1\t2\t167\t36\t128\t24\t96\tAnnabel\n"
+            ."5\t1\t1\t1\t1\t3\t310\t36\t108\t28\t96\tQuince\n"
+            ."5\t1\t1\t1\t2\t1\t20\t150\t54\t23\t96\tBus\n"
+            ."5\t1\t1\t1\t2\t2\t92\t150\t45\t27\t96\t14\n";
+        Process::fake([
+            "*'tesseract'*" => Process::result($tsv),
+            "*'faces'*" => Process::result($faces),
+            "*'logos'*" => Process::result($logos),
+            "*'render'*" => function ($process) {
+                $command = $process->command;
+                $this->rendered[] = json_decode((string) file_get_contents(end($command)), true);
+                file_put_contents($command[count($command) - 2], 'png bytes');
+
+                return Process::result('{"ok": true}');
+            },
+        ]);
+    }
+
     public function test_claude_gets_filtered_text_and_never_the_original(): void
     {
-        $admin = $this->admin();
-        $this->actingAs($admin)->post('/uploads', ['files' => [UploadedFile::fake()->createWithContent('Annabel Quince notes.csv', "name,email\nAnnabel Quince,{$this->student}\n")]])
+        $this->actingAs($this->admin())->post('/uploads', ['student' => 1, 'files' => [UploadedFile::fake()->createWithContent('Annabel Quince notes.csv', "name,email\nAnnabel Quince,{$this->student}\n")]])
             ->assertSessionHas('uploads_status', 'Uploaded 1 file.');
 
         $upload = Upload::first();
@@ -67,39 +92,47 @@ class UploadsTest extends TestCase
         $this->assertStringNotContainsString('Annabel', $upload->describeForClaude());
     }
 
-    public function test_files_marked_as_having_student_information_give_claude_nothing(): void
+    public function test_images_go_to_claude_with_names_covered(): void
     {
-        $this->actingAs($this->admin())->post('/uploads', ['share' => 'none', 'files' => [UploadedFile::fake()->createWithContent('roster.txt', 'Annabel Quince')]]);
+        $this->fakeImageTools();
+        $response = $this->actingAs($this->admin())->postJson('/uploads', ['student' => 1, 'files' => [UploadedFile::fake()->createWithContent('roster.png', 'png bytes')]])->assertOk();
+
         $upload = Upload::first();
-
-        $this->assertSame([], $upload->forClaude());
-        $this->assertStringContainsString('not given to you', $upload->describeForClaude());
-
-        $this->actingAs($upload->user)->post("/uploads/{$upload->id}/share", ['share' => 'text']);
-        $this->assertSame(['text.txt'], array_keys($upload->fresh()->forClaude()));
+        $this->assertSame(['image.png', 'text.txt'], array_keys($upload->forClaude()));
+        $this->assertSame([[167, 36, 128, 24], [310, 36, 108, 28]], $this->rendered[0]['black'], 'the name is covered, the rest is not');
+        $this->assertSame(2, $response->json('uploads.0.covered'));
+        $this->assertStringContainsString('Student: [name '.Pseudonym::for($this->student), $this->claudeText($upload));
+        $this->assertNotNull($response->json('uploads.0.preview'));
+        $this->actingAs($upload->user)->get(parse_url($response->json('uploads.0.preview'), PHP_URL_PATH))->assertOk();
     }
 
-    public function test_an_image_with_a_face_waits_for_the_uploader_to_confirm(): void
+    public function test_faces_wait_for_the_uploader_and_are_covered_if_they_say_so(): void
     {
-        Process::fake(['*tesseract*' => Process::result('Field trip, Annabel Quince'), '*faces.py*' => Process::result("2\n")]);
+        $this->fakeImageTools('[[400, 40, 60, 60]]');
         $admin = $this->admin();
+        $response = $this->actingAs($admin)->postJson('/uploads', ['student' => 0, 'files' => [UploadedFile::fake()->createWithContent('trip.jpg', 'jpeg bytes')]])->assertOk();
+        $this->assertSame([true, 1], [$response->json('uploads.0.waiting'), $response->json('uploads.0.faces')]);
 
-        $response = $this->actingAs($admin)->postJson('/uploads', ['share' => 'image', 'files' => [UploadedFile::fake()->createWithContent('trip.jpg', 'jpeg bytes')]])->assertOk();
-        $this->assertSame([2, true], [$response->json('uploads.0.faces'), $response->json('uploads.0.waiting')]);
         $upload = Upload::first();
-        $this->assertSame(['text.txt'], array_keys($upload->forClaude()));
-        $this->assertStringContainsString(Pseudonym::for($this->student), $this->claudeText($upload));
+        $this->assertSame(['text.txt'], array_keys($upload->forClaude()), 'only the text until they decide');
+        $this->assertSame([[400, 40, 60, 60]], end($this->rendered)['red'], 'the preview shows the face in a red box');
 
-        $this->actingAs($admin)->postJson("/uploads/{$upload->id}/share", ['share' => 'image', 'confirm_faces' => true])->assertJson(['waiting' => false]);
-        $this->assertSame(['image.jpg', 'text.txt'], array_keys($upload->fresh()->forClaude()));
+        $this->actingAs($admin)->postJson($response->json('uploads.0.url.review'), ['cover' => true])->assertJson(['waiting' => false, 'covered' => 3]);
+        $this->assertContains([400, 40, 60, 60], end($this->rendered)['black']);
+        $this->assertSame(['image.png', 'text.txt'], array_keys($upload->fresh()->forClaude()));
+
+        $this->actingAs($admin)->postJson($response->json('uploads.0.url.review'), ['cover' => false])->assertJson(['covered' => 2]);
+        $this->assertNotContains([400, 40, 60, 60], end($this->rendered)['black'], 'not a student: left as it is');
     }
 
-    public function test_an_image_without_faces_goes_to_claude_straight_away(): void
+    public function test_an_image_with_student_information_whose_text_cant_be_read_isnt_given_to_claude(): void
     {
-        Process::fake(['*tesseract*' => Process::result(''), '*faces.py*' => Process::result("0\n")]);
-        $this->actingAs($this->admin())->post('/uploads', ['share' => 'image', 'files' => [UploadedFile::fake()->createWithContent('chart.png', 'png bytes')]]);
+        Process::fake(["*'tesseract'*" => Process::result('', 'error', 1)]);
+        $this->actingAs($this->admin())->post('/uploads', ['student' => 1, 'files' => [UploadedFile::fake()->createWithContent('scan.png', 'png bytes')]]);
 
-        $this->assertSame(['image.png'], array_keys(Upload::first()->forClaude()));
+        $upload = Upload::first();
+        $this->assertSame([], $upload->forClaude());
+        $this->assertSame('Couldn\'t read the text in this image, so it isn\'t given to Claude.', $upload->error);
     }
 
     public function test_office_files_give_their_text(): void
@@ -115,12 +148,23 @@ class UploadsTest extends TestCase
         $zip->addFromString('xl/worksheets/sheet1.xml', '<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1"><v>12</v></c></row><row r="2"><c r="A2" t="s"><v>1</v></c><c r="B2"><f>SUM(B1)</f><v>12</v></c></row></sheetData></worksheet>');
         $zip->close();
 
-        $admin = $this->admin();
-        $this->actingAs($admin)->post('/uploads', ['files' => [new UploadedFile($docx, 'minutes.docx', null, null, true), new UploadedFile($xlsx, 'grades.xlsx', null, null, true)]]);
+        $this->actingAs($this->admin())->post('/uploads', ['student' => 1, 'files' => [new UploadedFile($docx, 'minutes.docx', null, null, true), new UploadedFile($xlsx, 'grades.xlsx', null, null, true)]]);
         [$word, $excel] = Upload::orderBy('id')->get()->all();
 
         $this->assertStringContainsString('Meeting about [name '.Pseudonym::for($this->student), $this->claudeText($word));
         $this->assertStringContainsString("Student\t12\n[name ".Pseudonym::for($this->student), $this->claudeText($excel));
+    }
+
+    public function test_district_logos_are_looked_for(): void
+    {
+        $admin = $this->admin();
+        $this->actingAs($admin)->post('/administration/uploads/logos', ['logo' => UploadedFile::fake()->createWithContent('logo.png', base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='))]);
+        $this->assertCount(1, app(Uploads::class)->logoFiles());
+        $this->actingAs($admin)->get('/administration/uploads')->assertSee('Logos to look for in images');
+
+        $this->fakeImageTools(logos: '[[700, 150, 120, 120, 0]]');
+        $this->actingAs($admin)->postJson('/uploads', ['student' => 0, 'files' => [UploadedFile::fake()->createWithContent('poster.png', 'png bytes')]])
+            ->assertJson(['uploads' => [['waiting' => true, 'logos' => 1, 'faces' => 0]]]);
     }
 
     public function test_the_size_limit_is_a_setting_up_to_1024_mb(): void
@@ -131,32 +175,33 @@ class UploadsTest extends TestCase
         $this->actingAs($admin)->post('/administration/uploads', ['max_mb' => 1]);
         $this->assertSame(1, Uploads::maxMb());
 
-        $this->actingAs($admin)->from('/uploads')->post('/uploads', ['files' => [UploadedFile::fake()->create('big.txt', 2048)]])->assertSessionHasErrors('files.0');
+        $this->actingAs($admin)->from('/chat')->post('/uploads', ['student' => 0, 'files' => [UploadedFile::fake()->create('big.txt', 2048)]])->assertSessionHasErrors('files.0');
         $this->assertSame(0, Upload::count());
     }
 
     public function test_uploads_are_off_until_the_volume_keeps_originals_from_the_harness(): void
     {
         config(['uploads.require_volume' => true]);
-        $this->actingAs($this->admin())->from('/uploads')->post('/uploads', ['files' => [UploadedFile::fake()->createWithContent('a.txt', 'x')]])
+        $this->actingAs($this->admin())->from('/chat')->post('/uploads', ['student' => 0, 'files' => [UploadedFile::fake()->createWithContent('a.txt', 'x')]])
             ->assertSessionHasErrors('files');
         $this->assertSame(0, Upload::count());
     }
 
-    public function test_people_only_see_and_change_their_own(): void
+    public function test_people_only_change_their_own(): void
     {
-        $this->actingAs($this->admin())->post('/uploads', ['files' => [UploadedFile::fake()->createWithContent('mine.txt', 'x')]]);
+        $this->actingAs($this->admin())->post('/uploads', ['student' => 0, 'files' => [UploadedFile::fake()->createWithContent('mine.txt', 'x')]]);
         $other = $this->admin();
-        $this->actingAs($other)->post('/uploads/'.Upload::first()->id.'/share', ['share' => 'none'])->assertNotFound();
-        $this->actingAs($other)->delete('/uploads/'.Upload::first()->id)->assertNotFound();
-        $this->actingAs(User::factory()->create())->post('/uploads', ['files' => [UploadedFile::fake()->createWithContent('a.txt', 'x')]])->assertForbidden();
-        $this->actingAs($other)->get('/uploads')->assertStatus(405);
+        $id = Upload::first()->id;
+        $this->actingAs($other)->post("/uploads/{$id}/review", ['cover' => true])->assertNotFound();
+        $this->actingAs($other)->get("/uploads/{$id}/preview")->assertNotFound();
+        $this->actingAs($other)->delete("/uploads/{$id}")->assertNotFound();
+        $this->actingAs(User::factory()->create())->post('/uploads', ['student' => 0, 'files' => [UploadedFile::fake()->createWithContent('a.txt', 'x')]])->assertForbidden();
     }
 
     public function test_chat_messages_carry_their_files_and_deleting_the_chat_deletes_them(): void
     {
         $admin = $this->admin();
-        $this->actingAs($admin)->postJson('/uploads', ['files' => [UploadedFile::fake()->createWithContent('Annabel Quince plan.txt', 'Plan for Annabel Quince')]]);
+        $this->actingAs($admin)->postJson('/uploads', ['student' => 1, 'files' => [UploadedFile::fake()->createWithContent('Annabel Quince plan.txt', 'Plan for Annabel Quince')]]);
         $upload = Upload::first();
 
         $this->actingAs($admin)->post('/chat', ['text' => 'Summarise this', 'uploads' => [$upload->id]]);
