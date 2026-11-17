@@ -74,6 +74,7 @@ class UploadsController extends Controller
             'share' => $upload->share,
             'image' => $upload->isImage(),
             'faces' => $upload->faces,
+            'text' => $upload->has_text,
             'waiting' => $upload->waitingForFaces(),
             'error' => $upload->error,
             'url' => [
