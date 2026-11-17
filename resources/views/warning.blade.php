@@ -1,0 +1,1 @@
+<p class="text-sm text-amber-800 dark:text-amber-300">{{ __('The broker does its best to replace student information in what Claude gets, but in uploaded files it can\'t guarantee it the way it can for Tornado Engine\'s own data. If a file has student information, choose Nothing.') }}</p>

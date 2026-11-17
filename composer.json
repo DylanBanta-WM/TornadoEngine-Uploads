@@ -1,0 +1,28 @@
+{
+    "name": "tornado-engine/uploads",
+    "description": "Tornado Engine core-module: upload files, and give Claude filtered copies (text run through the broker; images only when marked as having no student information).",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.4",
+        "illuminate/support": "^13.0",
+        "tornado-engine/broker": ">=0.9"
+    },
+    "autoload": {
+        "psr-4": {
+            "TornadoEngine\\Uploads\\": "src/"
+        }
+    },
+    "extra": {
+        "tornado": {
+            "name": "Uploads",
+            "core": ">=0.20",
+            "core-module": true,
+            "provider": "TornadoEngine\\Uploads\\UploadsServiceProvider",
+            "settings": "/administration/uploads"
+        },
+        "branch-alias": {
+            "dev-main": "0.1.x-dev"
+        }
+    }
+}
