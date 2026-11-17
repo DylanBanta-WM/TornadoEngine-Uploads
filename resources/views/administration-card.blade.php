@@ -1,5 +1,6 @@
 @php($logos = app(\TornadoEngine\Uploads\Uploads::class)->logoFiles())
 
+<div class="grid grid-cols-1 items-start gap-6 lg:col-span-2 lg:grid-cols-2">
 <x-settings-card :title="__('Uploads')">
     @if (session('uploads_status'))
         <p class="text-green-700 dark:text-green-400">{{ session('uploads_status') }}</p>
@@ -10,7 +11,7 @@
     <form method="POST" action="{{ route('uploads.settings') }}" class="flex flex-col gap-3 sm:flex-row sm:items-end">
         @csrf
         <div class="flex-1">
-            <x-input-label for="max_mb" :value="__('Largest file (MB, up to :limit)', ['limit' => \TornadoEngine\Uploads\Uploads::LIMIT_MB])" />
+            <x-input-label for="max_mb" :value="__('Max file size (MB, up to :limit)', ['limit' => \TornadoEngine\Uploads\Uploads::LIMIT_MB])" />
             <x-text-input id="max_mb" name="max_mb" type="number" min="1" :max="\TornadoEngine\Uploads\Uploads::LIMIT_MB" class="mt-1 block w-full" :value="old('max_mb', \TornadoEngine\Uploads\Uploads::maxMb())" required />
             <x-input-error :messages="$errors->get('max_mb')" class="mt-2" />
         </div>
@@ -41,3 +42,4 @@
         <x-primary-button class="justify-center">{{ __('Add') }}</x-primary-button>
     </form>
 </x-settings-card>
+</div>
