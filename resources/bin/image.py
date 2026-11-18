@@ -1,9 +1,13 @@
 # Image work for the Uploads module, with OpenCV. Prints JSON.
 #   faces <image> <haarcascades dir>         -> [[x, y, w, h], ...]
 #   logos <image> <logo> [<logo> ...]        -> [[x, y, w, h, logo index], ...]
+#   ocr <image>                              -> {"passes": [[line: [{"text", "box": [x, y, w, h]}, ...], ...], ...]}
 #   render <image> <output.png> <boxes.json> -> {"ok": true}; boxes: {"black": [[x,y,w,h]...], "red": [[x,y,w,h]...]}
 import json
 import math
+import os
+import subprocess
+import tempfile
 import sys
 
 import cv2
@@ -100,6 +104,36 @@ def logos(path, logo_paths):
     return found
 
 
+def ocr(path):
+    # Tesseract misses small text (a name on a race bib) at the image's own size, so small images are also
+    # read enlarged, each in two page modes: "a block of text" and "text scattered anywhere". Boxes are in
+    # the original image's pixels.
+    image = read(path)
+    longest = max(image.shape[:2])
+    scales = [1] + ([s for s in (2, 3) if longest * s <= 3200] if longest < 1600 else [])
+    passes = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for scale in scales:
+            source = path
+            if scale > 1:
+                source = os.path.join(tmp, "x%d.png" % scale)
+                cv2.imwrite(source, cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC))
+            for psm in ("6", "11"):
+                result = subprocess.run(["tesseract", source, "stdout", "--psm", psm, "tsv"], capture_output=True, text=True, timeout=120)
+                if result.returncode != 0:
+                    print(json.dumps({"error": "tesseract"}))
+                    sys.exit(0)
+                lines = {}
+                for row in result.stdout.splitlines():
+                    cells = row.split("\t")
+                    if len(cells) < 12 or cells[0] != "5" or not cells[11].strip():
+                        continue
+                    box = [int(int(cells[i]) / scale) for i in (6, 7, 8, 9)]
+                    lines.setdefault((cells[2], cells[3], cells[4]), []).append({"text": cells[11].strip(), "box": box})
+                passes.append(list(lines.values()))
+    return {"passes": passes}
+
+
 def render(path, output, boxes_path):
     image = read(path)
     with open(boxes_path) as handle:
@@ -118,5 +152,7 @@ if command == "faces":
     print(json.dumps(faces(sys.argv[2], sys.argv[3])))
 elif command == "logos":
     print(json.dumps(logos(sys.argv[2], sys.argv[3:])))
+elif command == "ocr":
+    print(json.dumps(ocr(sys.argv[2])))
 elif command == "render":
     print(json.dumps(render(sys.argv[2], sys.argv[3], sys.argv[4])))

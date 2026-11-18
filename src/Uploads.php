@@ -117,34 +117,45 @@ class Uploads
 
     private function prepareImage(Upload $upload, string $original): void
     {
-        // Each word and where it is; words (or lines) the broker would change get a black bar.
+        // Each word and where it is, from several OCR passes; words (or lines) the broker would change get a black bar.
         try {
-            $lines = $this->words($original);
+            $passes = $this->words($original);
         } catch (RuntimeException $e) {
             if ($upload->student) {
                 throw new RuntimeException(__('Couldn\'t read the text in this image, so it isn\'t given to Claude.'));
             }
-            $lines = [];
+            $passes = [];
         }
-        $black = [];
-        $words = array_merge(...array_values($lines ?: [[]]));
+        $lines = array_merge(...($passes ?: [[]]));
+        $words = array_merge(...($lines ?: [[]]));
         $filteredWords = $this->broker->filterEach(array_column($words, 'text'));
         $lineTexts = array_map(fn ($line) => implode(' ', array_column($line, 'text')), $lines);
         $filteredLines = $this->broker->filterEach($lineTexts);
+        $black = [];
         $i = 0;
         foreach ($lines as $key => $line) {
             $hit = false;
             foreach ($line as $word) {
                 if ($filteredWords[$i++] !== $word['text']) {
-                    $black[] = $word['box'];
+                    // Around it too: OCR often misses the rest of a name (a family name under a given name).
+                    $black[] = self::around($word['box']);
                     $hit = true;
                 }
             }
             if (! $hit && $filteredLines[$key] !== $lineTexts[$key]) {
-                array_push($black, ...array_column($line, 'box'));
+                array_push($black, ...array_map(fn ($word) => self::around($word['box']), $line));
             }
         }
-        $this->writeText($upload, implode("\n", $filteredLines), filtered: true);
+        // For Claude, the text of the pass that read the most.
+        $best = [];
+        $offset = 0;
+        foreach ($passes as $pass) {
+            if (array_sum(array_map('count', $pass)) > array_sum(array_map('count', $best['lines'] ?? []))) {
+                $best = ['lines' => $pass, 'from' => $offset];
+            }
+            $offset += count($pass);
+        }
+        $this->writeText($upload, implode("\n", array_slice($filteredLines, $best['from'] ?? 0, count($best['lines'] ?? []))), filtered: true);
 
         // Faces and district logos: shown to the uploader, who decides.
         $upload->findings ??= ['faces' => $this->faces($original), 'logos' => $this->logos($original)];
@@ -175,26 +186,30 @@ class Uploads
     }
 
     /**
-     * The words in an image (tesseract), by line.
+     * The words in an image (tesseract, a few passes), by line.
      *
-     * @return array<string, list<array{text: string, box: array{int, int, int, int}}>>
+     * @return list<list<list<array{text: string, box: array{int, int, int, int}}>>> passes, lines, words
      */
     public function words(string $path): array
     {
-        $result = Process::timeout(180)->run(['tesseract', $path, 'stdout', 'tsv']);
-        if (! $result->successful()) {
+        try {
+            return $this->image(['ocr', $path])['passes'] ?? [];
+        } catch (RuntimeException) {
             throw new RuntimeException(__('Couldn\'t read the text in this image.'));
         }
-        $lines = [];
-        foreach (explode("\n", $result->output()) as $row) {
-            $cells = explode("\t", rtrim($row, "\r"));
-            if (count($cells) < 12 || $cells[0] !== '5' || trim($cells[11]) === '') {
-                continue;
-            }
-            $lines["{$cells[2]}.{$cells[3]}.{$cells[4]}"][] = ['text' => trim($cells[11]), 'box' => [(int) $cells[6], (int) $cells[7], (int) $cells[8], (int) $cells[9]]];
-        }
+    }
 
-        return $lines;
+    /**
+     * A word's box, grown to about a line above and below and half its width each side.
+     *
+     * @param  array{int, int, int, int}  $box
+     * @return array{int, int, int, int}
+     */
+    private static function around(array $box): array
+    {
+        [$x, $y, $w, $h] = $box;
+
+        return [max(0, (int) round($x - $w / 2)), max(0, (int) round($y - $h * 1.3)), (int) round($w * 2), (int) round($h * 3.6)];
     }
 
     /** @return list<array{int, int, int, int}> */

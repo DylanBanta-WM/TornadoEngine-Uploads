@@ -57,14 +57,12 @@ class UploadsTest extends TestCase
     /** A screenshot whose OCR finds the student's name, and the given faces. */
     private function fakeImageTools(string $faces = '[]', string $logos = '[]'): void
     {
-        $tsv = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
-            ."5\t1\t1\t1\t1\t1\t20\t30\t130\t24\t96\tStudent:\n"
-            ."5\t1\t1\t1\t1\t2\t167\t36\t128\t24\t96\tAnnabel\n"
-            ."5\t1\t1\t1\t1\t3\t310\t36\t108\t28\t96\tQuince\n"
-            ."5\t1\t1\t1\t2\t1\t20\t150\t54\t23\t96\tBus\n"
-            ."5\t1\t1\t1\t2\t2\t92\t150\t45\t27\t96\t14\n";
+        // Two OCR passes; the second reads less.
+        $line1 = [['text' => 'Student:', 'box' => [20, 30, 130, 24]], ['text' => 'Annabel', 'box' => [167, 36, 128, 24]], ['text' => 'Quince', 'box' => [310, 36, 108, 28]]];
+        $line2 = [['text' => 'Bus', 'box' => [20, 150, 54, 23]], ['text' => '14', 'box' => [92, 150, 45, 27]]];
+        $ocr = json_encode(['passes' => [[$line1, $line2], [$line2]]]);
         Process::fake([
-            "*'tesseract'*" => Process::result($tsv),
+            "*'ocr'*" => Process::result($ocr),
             "*'faces'*" => Process::result($faces),
             "*'logos'*" => Process::result($logos),
             "*'render'*" => function ($process) {
@@ -99,7 +97,7 @@ class UploadsTest extends TestCase
 
         $upload = Upload::first();
         $this->assertSame(['image.png', 'text.txt'], array_keys($upload->forClaude()));
-        $this->assertSame([[167, 36, 128, 24], [310, 36, 108, 28]], $this->rendered[0]['black'], 'the name is covered, the rest is not');
+        $this->assertSame([[103, 5, 256, 86], [256, 0, 216, 101]], $this->rendered[0]['black'], 'the name is covered (and around it), the rest is not');
         $this->assertSame(2, $response->json('uploads.0.covered'));
         $this->assertStringContainsString('Student: [name '.Pseudonym::for($this->student), $this->claudeText($upload));
         $this->assertNotNull($response->json('uploads.0.preview'));
@@ -142,7 +140,7 @@ class UploadsTest extends TestCase
 
     public function test_an_image_with_student_information_whose_text_cant_be_read_isnt_given_to_claude(): void
     {
-        Process::fake(["*'tesseract'*" => Process::result('', 'error', 1)]);
+        Process::fake(["*'ocr'*" => Process::result('{"error": "tesseract"}')]);
         $this->actingAs($this->admin())->post('/uploads', ['student' => 1, 'files' => [UploadedFile::fake()->createWithContent('scan.png', 'png bytes')]]);
 
         $upload = Upload::first();
