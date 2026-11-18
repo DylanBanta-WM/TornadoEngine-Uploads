@@ -90,61 +90,52 @@ class UploadsTest extends TestCase
         $this->assertStringNotContainsString('Annabel', $upload->describeForClaude());
     }
 
-    public function test_images_go_to_claude_with_names_covered(): void
+    public function test_names_read_in_an_image_wait_for_the_uploader_then_are_covered(): void
     {
         $this->fakeImageTools();
-        $response = $this->actingAs($this->admin())->postJson('/uploads', ['student' => 1, 'files' => [UploadedFile::fake()->createWithContent('roster.png', 'png bytes')]])->assertOk();
-
-        $upload = Upload::first();
-        $this->assertSame(['image.png', 'text.txt'], array_keys($upload->forClaude()));
-        $this->assertSame([[103, 5, 256, 86], [256, 0, 216, 101]], $this->rendered[0]['black'], 'the name is covered (and around it), the rest is not');
-        $this->assertSame(2, $response->json('uploads.0.covered'));
-        $this->assertStringContainsString('Student: [name '.Pseudonym::for($this->student), $this->claudeText($upload));
-        $this->assertNotNull($response->json('uploads.0.preview'));
-        $this->actingAs($upload->user)->get(parse_url($response->json('uploads.0.preview'), PHP_URL_PATH))->assertOk();
-    }
-
-    public function test_faces_wait_for_the_uploader_and_are_covered_if_they_say_so(): void
-    {
-        $this->fakeImageTools('[[400, 40, 60, 60]]');
         $admin = $this->admin();
-        $response = $this->actingAs($admin)->postJson('/uploads', ['student' => 0, 'files' => [UploadedFile::fake()->createWithContent('trip.jpg', 'jpeg bytes')]])->assertOk();
-        $this->assertSame([true, 1], [$response->json('uploads.0.waiting'), $response->json('uploads.0.faces')]);
+        $response = $this->actingAs($admin)->postJson('/uploads', ['student' => 1, 'files' => [UploadedFile::fake()->createWithContent('roster.png', 'png bytes')]])->assertOk();
 
         $upload = Upload::first();
+        $this->assertSame([true, 2], [$response->json('uploads.0.waiting'), $response->json('uploads.0.names')]);
+        $this->assertSame([[103, 5, 256, 86], [256, 0, 216, 101]], $response->json('uploads.0.boxes'), 'the name (and around it), not the rest');
+        $this->assertSame(['name', 'name'], $response->json('uploads.0.kinds'));
+        $this->assertSame([], end($this->rendered)['black'], 'the page draws the boxes until they decide');
         $this->assertSame(['text.txt'], array_keys($upload->forClaude()), 'only the text until they decide');
-        $this->assertSame([], end($this->rendered)['red'], 'the page draws the red boxes');
-        $this->assertSame([[400, 40, 60, 60]], $response->json('uploads.0.boxes'));
+        $this->assertStringContainsString('Student: [name '.Pseudonym::for($this->student), $this->claudeText($upload));
+        $this->actingAs($admin)->get(parse_url($response->json('uploads.0.preview'), PHP_URL_PATH))->assertOk();
 
-        $this->actingAs($admin)->postJson($response->json('uploads.0.url.review'), ['cover' => true])->assertJson(['waiting' => false, 'covered' => 3]);
-        $this->assertContains([400, 40, 60, 60], end($this->rendered)['black']);
+        $this->actingAs($admin)->postJson($response->json('uploads.0.url.review'), ['cover' => true])->assertJson(['waiting' => false, 'covered' => 2]);
+        $this->assertSame([[103, 5, 256, 86], [256, 0, 216, 101]], end($this->rendered)['black']);
         $this->assertSame(['image.png', 'text.txt'], array_keys($upload->fresh()->forClaude()));
-
-        $this->actingAs($admin)->postJson($response->json('uploads.0.url.review'), ['cover' => false])->assertJson(['covered' => 2]);
-        $this->assertNotContains([400, 40, 60, 60], end($this->rendered)['black'], 'not a student: left as it is');
     }
 
-    public function test_the_uploader_can_remove_found_boxes_and_add_their_own(): void
+    public function test_faces_logos_and_names_are_found_together_and_covered_as_the_uploader_chooses(): void
     {
-        $this->fakeImageTools('[[400, 40, 60, 60]]');
+        $this->fakeImageTools('[[400, 40, 60, 60]]', '[[500, 300, 80, 80, 0]]');
+        Storage::disk('uploads')->put('logos/district.png', 'png bytes');
         $admin = $this->admin();
         $response = $this->actingAs($admin)->postJson('/uploads', ['student' => 0, 'files' => [UploadedFile::fake()->createWithContent('trip.jpg', 'jpeg bytes')]])->assertOk();
+        $this->assertSame(['face', 'logo', 'name', 'name'], $response->json('uploads.0.kinds'));
+        $this->assertSame([400, 40, 60, 60], $response->json('uploads.0.boxes.0'));
 
-        $this->actingAs($admin)->postJson($response->json('uploads.0.url.review'), ['cover' => true, 'boxes' => [[10, 20, 30, 40]]])->assertJson(['waiting' => false, 'covered' => 3]);
+        // They removed the face and one name, and added a box of their own.
+        $this->actingAs($admin)->postJson($response->json('uploads.0.url.review'), ['cover' => true, 'boxes' => [[500, 300, 80, 80], [103, 5, 256, 86], [10, 20, 30, 40]]])->assertJson(['waiting' => false, 'covered' => 3]);
         $black = end($this->rendered)['black'];
         $this->assertContains([10, 20, 30, 40], $black);
         $this->assertNotContains([400, 40, 60, 60], $black);
+        $this->assertNotContains([256, 0, 216, 101], $black);
 
         $this->actingAs($admin)->postJson($response->json('uploads.0.url.review'), ['cover' => true, 'boxes' => [[1, 2, 3]]])->assertUnprocessable();
     }
 
-    public function test_names_ocr_misread_are_covered_too(): void
+    public function test_names_ocr_misread_are_found_too(): void
     {
         $line = [['text' => 'Coach:', 'box' => [20, 30, 100, 24]], ['text' => 'QU1NCE', 'box' => [140, 30, 100, 24]], ['text' => 'Bus', 'box' => [300, 30, 50, 24]]];
         $this->fakeImageTools(passes: [[$line]]);
-        $this->actingAs($this->admin())->postJson('/uploads', ['student' => 1, 'files' => [UploadedFile::fake()->createWithContent('board.png', 'png bytes')]])->assertOk();
+        $response = $this->actingAs($this->admin())->postJson('/uploads', ['student' => 1, 'files' => [UploadedFile::fake()->createWithContent('board.png', 'png bytes')]])->assertOk();
 
-        $this->assertSame([[90, 0, 200, 86]], $this->rendered[0]['black']);
+        $this->assertSame([[90, 0, 200, 86]], $response->json('uploads.0.boxes'));
         $this->assertSame('Coach: [name] Bus', $this->claudeText(Upload::first()));
     }
 

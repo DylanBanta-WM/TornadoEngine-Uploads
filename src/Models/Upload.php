@@ -27,10 +27,10 @@ class Upload extends Model
         return in_array(strtolower(pathinfo($this->name, PATHINFO_EXTENSION)), Uploads::IMAGES, true);
     }
 
-    /** Faces or district logos were found in the image, and the uploader hasn't said whether to cover them. */
+    /** Faces, district logos or names were found in the image, and the uploader hasn't said what to cover. */
     public function waiting(): bool
     {
-        return $this->isImage() && ! $this->answered && (($this->findings['faces'] ?? []) !== [] || ($this->findings['logos'] ?? []) !== []);
+        return $this->isImage() && ! $this->answered && (($this->findings['faces'] ?? []) !== [] || ($this->findings['logos'] ?? []) !== [] || ($this->findings['names'] ?? []) !== []);
     }
 
     /** @return array<string, string> what Claude can read, name => path in the harness */

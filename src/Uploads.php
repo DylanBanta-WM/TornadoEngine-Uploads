@@ -76,7 +76,7 @@ class Uploads
     }
 
     /**
-     * The uploader looked at the faces and logos found in an image: cover them, or leave them.
+     * The uploader looked at the faces, logos and names found in an image: cover them, or leave them.
      * $boxes, when given, are the boxes they settled on (found ones removed, their own added).
      *
      * @param  list<array{int, int, int, int}>|null  $boxes
@@ -90,10 +90,23 @@ class Uploads
         $this->prepare($upload);
     }
 
-    /** @return list<array{int, int, int, int}> faces and logos found, or the boxes the uploader chose */
+    /** @return list<array{int, int, int, int}> faces, logos and names found, or the boxes the uploader chose */
     public function boxes(Upload $upload): array
     {
-        return $upload->findings['chosen'] ?? array_merge($upload->findings['faces'] ?? [], array_map(fn ($logo) => array_slice($logo, 0, 4), $upload->findings['logos'] ?? []));
+        return $upload->findings['chosen'] ?? array_column($this->found($upload), 'box');
+    }
+
+    /** @return list<array{box: array{int, int, int, int}, kind: string}> faces, logos and names found, for the uploader to check */
+    public function found(Upload $upload): array
+    {
+        $found = [];
+        foreach (['faces' => 'face', 'logos' => 'logo', 'names' => 'name'] as $key => $kind) {
+            foreach ($upload->findings[$key] ?? [] as $box) {
+                $found[] = ['box' => array_slice($box, 0, 4), 'kind' => $kind];
+            }
+        }
+
+        return $found;
     }
 
     /** Makes Claude's copies. */
@@ -166,11 +179,13 @@ class Uploads
         }
         $this->writeText($upload, implode("\n", array_slice($filteredLines, $best['from'] ?? 0, count($best['lines'] ?? []))), filtered: true);
 
-        // Faces and district logos: shown to the uploader, who decides.
+        // Faces, district logos and names read in the image: shown to the uploader, who decides what to cover.
         $upload->findings ??= ['faces' => $this->faces($original), 'logos' => $this->logos($original)];
+        $upload->findings = [...$upload->findings, 'names' => array_values(array_unique($black, SORT_REGULAR))];
+        $black = [];
 
         if ($upload->waiting()) {
-            // The red boxes are drawn on the page, where the uploader can change them.
+            // The boxes are drawn on the page, where the uploader can change them.
             $this->render($original, $this->previewPath($upload), $black);
 
             return;

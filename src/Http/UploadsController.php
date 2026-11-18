@@ -48,7 +48,7 @@ class UploadsController extends Controller
         return $request->expectsJson() ? response()->json($this->json($upload->fresh())) : back();
     }
 
-    /** For the uploader: the image with what's covered, and (until they decide) red boxes round faces and logos. */
+    /** For the uploader: the image with what's covered, before they decide, without boxes (the page draws them). */
     public function preview(Request $request, Upload $upload, Uploads $uploads): BinaryFileResponse
     {
         $this->own($request, $upload);
@@ -125,8 +125,11 @@ class UploadsController extends Controller
             'waiting' => $upload->waiting(),
             'faces' => count($upload->findings['faces'] ?? []),
             'logos' => count($upload->findings['logos'] ?? []),
+            'names' => count($upload->findings['names'] ?? []),
             'covered' => $upload->covered,
             'boxes' => $upload->waiting() ? app(Uploads::class)->boxes($upload) : [],
+            // face, logo or name for each box (drawn red, blue, green)
+            'kinds' => $upload->waiting() ? array_column(app(Uploads::class)->found($upload), 'kind') : [],
             'error' => $upload->error,
             'preview' => $upload->isImage() && is_file(app(Uploads::class)->previewPath($upload)) ? route('uploads.preview', $upload).'?v='.$upload->updated_at?->timestamp : null,
             'url' => [
