@@ -142,13 +142,13 @@ class Uploads
         $lines = array_merge(...($passes ?: [[]]));
         $words = array_merge(...($lines ?: [[]]));
         $filteredWords = $this->broker->filterEach(array_column($words, 'text'));
-        // Names OCR misread (0 for O, rn for m, a letter wrong): covered too, and "[name]" in the text.
+        // Names OCR misread (0 for O, rn for m, a letter wrong): covered too, and a placeholder in the text.
         $fuzzy = method_exists($this->broker, 'resemblesName');
         $misread = array_map(fn ($word, $filtered) => $fuzzy && $filtered === $word['text'] && $this->broker->resemblesName($word['text']), $words, $filteredWords);
         $i = 0;
         $lineTexts = array_map(function ($line) use (&$i, $misread) {
             return implode(' ', array_map(function ($word) use (&$i, $misread) {
-                return $misread[$i++] ? '[name]' : $word['text'];
+                return ! $misread[$i++] ? $word['text'] : (method_exists($this->broker, 'placeholder') ? $this->broker->placeholder($word['text'], 'name') : '[name]');
             }, $line));
         }, $lines);
         $filteredLines = $this->broker->filterEach($lineTexts);

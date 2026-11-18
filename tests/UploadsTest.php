@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
+use TornadoEngine\Broker\Broker;
 use TornadoEngine\Broker\Filter;
 use TornadoEngine\Broker\Models\Person;
 use TornadoEngine\Broker\Pseudonym;
@@ -136,7 +137,8 @@ class UploadsTest extends TestCase
         $response = $this->actingAs($this->admin())->postJson('/uploads', ['student' => 1, 'files' => [UploadedFile::fake()->createWithContent('board.png', 'png bytes')]])->assertOk();
 
         $this->assertSame([[90, 0, 200, 86]], $response->json('uploads.0.boxes'));
-        $this->assertSame('Coach: [name] Bus', $this->claudeText(Upload::first()));
+        $this->assertMatchesRegularExpression('/^Coach: \[name v-[0-9a-f]{10}\] Bus$/', $this->claudeText(Upload::first()));
+        $this->assertSame('Coach: QU1NCE Bus', app(Broker::class)->display($this->claudeText(Upload::first())), 'people see what was read');
     }
 
     public function test_an_image_with_student_information_whose_text_cant_be_read_isnt_given_to_claude(): void
