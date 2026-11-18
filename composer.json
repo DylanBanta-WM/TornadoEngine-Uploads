@@ -23,7 +23,7 @@
             "settings": "/administration/uploads"
         },
         "branch-alias": {
-            "dev-main": "0.5.x-dev"
+            "dev-main": "0.7.x-dev"
         }
     }
 }
