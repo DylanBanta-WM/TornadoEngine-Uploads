@@ -55,12 +55,12 @@ class UploadsTest extends TestCase
     }
 
     /** A screenshot whose OCR finds the student's name, and the given faces. */
-    private function fakeImageTools(string $faces = '[]', string $logos = '[]'): void
+    private function fakeImageTools(string $faces = '[]', string $logos = '[]', ?array $passes = null): void
     {
         // Two OCR passes; the second reads less.
         $line1 = [['text' => 'Student:', 'box' => [20, 30, 130, 24]], ['text' => 'Annabel', 'box' => [167, 36, 128, 24]], ['text' => 'Quince', 'box' => [310, 36, 108, 28]]];
         $line2 = [['text' => 'Bus', 'box' => [20, 150, 54, 23]], ['text' => '14', 'box' => [92, 150, 45, 27]]];
-        $ocr = json_encode(['passes' => [[$line1, $line2], [$line2]]]);
+        $ocr = json_encode(['passes' => $passes ?? [[$line1, $line2], [$line2]]]);
         Process::fake([
             "*'ocr'*" => Process::result($ocr),
             "*'faces'*" => Process::result($faces),
@@ -136,6 +136,16 @@ class UploadsTest extends TestCase
         $this->assertNotContains([400, 40, 60, 60], $black);
 
         $this->actingAs($admin)->postJson($response->json('uploads.0.url.review'), ['cover' => true, 'boxes' => [[1, 2, 3]]])->assertUnprocessable();
+    }
+
+    public function test_names_ocr_misread_are_covered_too(): void
+    {
+        $line = [['text' => 'Coach:', 'box' => [20, 30, 100, 24]], ['text' => 'QU1NCE', 'box' => [140, 30, 100, 24]], ['text' => 'Bus', 'box' => [300, 30, 50, 24]]];
+        $this->fakeImageTools(passes: [[$line]]);
+        $this->actingAs($this->admin())->postJson('/uploads', ['student' => 1, 'files' => [UploadedFile::fake()->createWithContent('board.png', 'png bytes')]])->assertOk();
+
+        $this->assertSame([[90, 0, 200, 86]], $this->rendered[0]['black']);
+        $this->assertSame('Coach: [name] Bus', $this->claudeText(Upload::first()));
     }
 
     public function test_an_image_with_student_information_whose_text_cant_be_read_isnt_given_to_claude(): void

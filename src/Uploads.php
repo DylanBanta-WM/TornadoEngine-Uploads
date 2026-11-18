@@ -129,14 +129,23 @@ class Uploads
         $lines = array_merge(...($passes ?: [[]]));
         $words = array_merge(...($lines ?: [[]]));
         $filteredWords = $this->broker->filterEach(array_column($words, 'text'));
-        $lineTexts = array_map(fn ($line) => implode(' ', array_column($line, 'text')), $lines);
+        // Names OCR misread (0 for O, rn for m, a letter wrong): covered too, and "[name]" in the text.
+        $fuzzy = method_exists($this->broker, 'resemblesName');
+        $misread = array_map(fn ($word, $filtered) => $fuzzy && $filtered === $word['text'] && $this->broker->resemblesName($word['text']), $words, $filteredWords);
+        $i = 0;
+        $lineTexts = array_map(function ($line) use (&$i, $misread) {
+            return implode(' ', array_map(function ($word) use (&$i, $misread) {
+                return $misread[$i++] ? '[name]' : $word['text'];
+            }, $line));
+        }, $lines);
         $filteredLines = $this->broker->filterEach($lineTexts);
         $black = [];
         $i = 0;
         foreach ($lines as $key => $line) {
             $hit = false;
             foreach ($line as $word) {
-                if ($filteredWords[$i++] !== $word['text']) {
+                $at = $i++;
+                if ($filteredWords[$at] !== $word['text'] || $misread[$at]) {
                     // Around it too: OCR often misses the rest of a name (a family name under a given name).
                     $black[] = self::around($word['box']);
                     $hit = true;
