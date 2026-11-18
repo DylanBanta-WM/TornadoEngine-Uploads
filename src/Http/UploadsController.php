@@ -57,6 +57,18 @@ class UploadsController extends Controller
         return response()->file($path, ['Cache-Control' => 'private, no-store']);
     }
 
+    /** For the uploader: the image they uploaded, as it is. */
+    public function image(Request $request, Upload $upload): BinaryFileResponse
+    {
+        $this->own($request, $upload);
+        abort_unless($upload->isImage() && Storage::disk('uploads')->exists($upload->path), 404);
+
+        // Only real raster images are shown as images (never SVG or anything that could run in the page).
+        $type = preg_match('#^image/(png|jpeg|gif|bmp|webp|tiff)$#', (string) $upload->mime) ? $upload->mime : 'application/octet-stream';
+
+        return response()->file(Storage::disk('uploads')->path($upload->path), ['Content-Type' => $type, 'Cache-Control' => 'private, max-age=3600', 'X-Content-Type-Options' => 'nosniff']);
+    }
+
     public function destroy(Request $request, Upload $upload, Uploads $uploads): JsonResponse|RedirectResponse
     {
         $this->own($request, $upload);
