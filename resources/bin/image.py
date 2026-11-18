@@ -3,10 +3,14 @@
 #   logos <image> <logo> [<logo> ...]        -> [[x, y, w, h, logo index], ...]
 #   render <image> <output.png> <boxes.json> -> {"ok": true}; boxes: {"black": [[x,y,w,h]...], "red": [[x,y,w,h]...]}
 import json
+import math
 import sys
 
 import cv2
 import numpy as np
+
+
+LOGO_VOTES = 12  # matches agreeing on one place, pooled over the enlargements
 
 
 def read(path, flags=cv2.IMREAD_COLOR):
@@ -38,34 +42,61 @@ def faces(path, cascades):
 
 
 def logos(path, logo_paths):
+    # SIFT keypoints; each match votes for where the logo's center is and how big it is. Votes that agree
+    # are a logo, even when it's small or bent (on a shirt, say), where fitting one transform fails.
+    # Votes from a few enlargements of the image are pooled, since any one of them can miss.
     scene = read(path, cv2.IMREAD_GRAYSCALE)
-    orb = cv2.ORB_create(nfeatures=4000)
-    scene_points, scene_descriptors = orb.detectAndCompute(scene, None)
-    found = []
-    if scene_descriptors is None:
-        return found
-    matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
-    for index, logo_path in enumerate(logo_paths):
+    longest = max(scene.shape)
+    ups = [up for up in (1.0, 1.25, 1.5, 2.0) if longest * up <= 2000] or [2000 / longest]
+    sift = cv2.SIFT_create(nfeatures=12000, contrastThreshold=0.02)
+    matcher = cv2.BFMatcher(cv2.NORM_L2)
+    logos_ = []
+    for logo_path in logo_paths:
         logo = cv2.imread(logo_path, cv2.IMREAD_GRAYSCALE)
+        points, descriptors = sift.detectAndCompute(logo, None) if logo is not None else (None, None)
+        logos_.append((logo, points, descriptors))
+    votes = [[] for _ in logo_paths]
+    for up in ups:
+        big = cv2.resize(scene, None, fx=up, fy=up, interpolation=cv2.INTER_CUBIC if up > 1 else cv2.INTER_AREA) if up != 1 else scene
+        scene_points, scene_descriptors = sift.detectAndCompute(big, None)
+        if scene_descriptors is None or len(scene_points) < 2:
+            continue
+        for index, (logo, logo_points, logo_descriptors) in enumerate(logos_):
+            if logo_descriptors is None or len(logo_points) < 5:
+                continue
+            h, w = logo.shape
+            for m, *rest in matcher.knnMatch(logo_descriptors, scene_descriptors, k=2):
+                if not rest or m.distance >= 0.8 * rest[0].distance:
+                    continue
+                seen, known = scene_points[m.trainIdx], logo_points[m.queryIdx]
+                scale = seen.size / known.size
+                turn = math.radians(seen.angle - known.angle)
+                dx, dy = w / 2 - known.pt[0], h / 2 - known.pt[1]
+                votes[index].append(((seen.pt[0] + scale * (dx * math.cos(turn) - dy * math.sin(turn))) / up,
+                                     (seen.pt[1] + scale * (dx * math.sin(turn) + dy * math.cos(turn))) / up, scale / up))
+    found = []
+    for index, (logo, _, _) in enumerate(logos_):
         if logo is None:
             continue
-        logo_points, logo_descriptors = orb.detectAndCompute(logo, None)
-        if logo_descriptors is None or len(logo_points) < 8:
-            continue
-        pairs = matcher.knnMatch(logo_descriptors, scene_descriptors, k=2)
-        good = [m for m, *rest in pairs if rest and m.distance < 0.75 * rest[0].distance]
-        if len(good) < 10:
-            continue
-        source = np.float32([logo_points[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
-        target = np.float32([scene_points[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
-        homography, mask = cv2.findHomography(source, target, cv2.RANSAC, 5.0)
-        if homography is None or mask.sum() < 10:
-            continue
         h, w = logo.shape
-        corners = cv2.perspectiveTransform(np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2), homography)
-        x, y, bw, bh = cv2.boundingRect(corners)
-        if bw > 4 and bh > 4 and bw < scene.shape[1] * 1.5 and bh < scene.shape[0] * 1.5:
-            found.append([max(0, int(x)), max(0, int(y)), int(bw), int(bh), index])
+        pool, taken = votes[index], set()
+        while True:
+            best = []
+            for i, (cx, cy, scale) in enumerate(pool):
+                if i in taken:
+                    continue
+                group = [j for j, (x, y, s) in enumerate(pool) if j not in taken and math.hypot(x - cx, y - cy) < 0.3 * w * scale and 0.6 < s / scale < 1.6]
+                if len(group) > len(best):
+                    best = group
+            if len(best) < LOGO_VOTES:
+                break
+            taken.update(best)
+            cx, cy, scale = (float(np.median([pool[j][k] for j in best])) for k in range(3))
+            bw, bh = w * scale * 1.2, h * scale * 1.2
+            if bw < 8 or bh < 8 or bw > scene.shape[1] * 1.2 or bh > scene.shape[0] * 1.2:
+                continue
+            x, y = max(0, int(cx - bw / 2)), max(0, int(cy - bh / 2))
+            found.append([x, y, int(min(bw, scene.shape[1] - x)), int(min(bh, scene.shape[0] - y)), index])
     return found
 
 
