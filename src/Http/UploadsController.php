@@ -41,7 +41,9 @@ class UploadsController extends Controller
     public function review(Request $request, Upload $upload, Uploads $uploads): JsonResponse|RedirectResponse
     {
         $this->own($request, $upload);
-        $uploads->review($upload, $request->boolean('cover'));
+        $request->validate(['boxes' => ['sometimes', 'array', 'max:200'], 'boxes.*' => ['array', 'size:4'], 'boxes.*.*' => ['integer', 'min:0']]);
+        $boxes = $request->has('boxes') ? array_map(fn ($box) => array_map('intval', array_values($box)), $request->input('boxes', [])) : null;
+        $uploads->review($upload, $request->boolean('cover'), $boxes);
 
         return $request->expectsJson() ? response()->json($this->json($upload->fresh())) : back();
     }
@@ -112,6 +114,7 @@ class UploadsController extends Controller
             'faces' => count($upload->findings['faces'] ?? []),
             'logos' => count($upload->findings['logos'] ?? []),
             'covered' => $upload->covered,
+            'boxes' => $upload->waiting() ? app(Uploads::class)->boxes($upload) : [],
             'error' => $upload->error,
             'preview' => $upload->isImage() && is_file(app(Uploads::class)->previewPath($upload)) ? route('uploads.preview', $upload).'?v='.$upload->updated_at?->timestamp : null,
             'url' => [

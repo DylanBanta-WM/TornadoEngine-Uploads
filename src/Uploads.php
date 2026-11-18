@@ -75,11 +75,25 @@ class Uploads
         return $upload->fresh();
     }
 
-    /** The uploader looked at the faces and logos found in an image: cover them, or leave them. */
-    public function review(Upload $upload, bool $cover): void
+    /**
+     * The uploader looked at the faces and logos found in an image: cover them, or leave them.
+     * $boxes, when given, are the boxes they settled on (found ones removed, their own added).
+     *
+     * @param  list<array{int, int, int, int}>|null  $boxes
+     */
+    public function review(Upload $upload, bool $cover, ?array $boxes = null): void
     {
+        if ($boxes !== null) {
+            $upload->findings = [...($upload->findings ?? []), 'chosen' => array_values($boxes)];
+        }
         $upload->fill(['answered' => true, 'cover' => $cover]);
         $this->prepare($upload);
+    }
+
+    /** @return list<array{int, int, int, int}> faces and logos found, or the boxes the uploader chose */
+    public function boxes(Upload $upload): array
+    {
+        return $upload->findings['chosen'] ?? array_merge($upload->findings['faces'] ?? [], array_map(fn ($logo) => array_slice($logo, 0, 4), $upload->findings['logos'] ?? []));
     }
 
     /** Makes Claude's copies. */
@@ -134,14 +148,14 @@ class Uploads
 
         // Faces and district logos: shown to the uploader, who decides.
         $upload->findings ??= ['faces' => $this->faces($original), 'logos' => $this->logos($original)];
-        $found = array_merge($upload->findings['faces'] ?? [], array_map(fn ($logo) => array_slice($logo, 0, 4), $upload->findings['logos'] ?? []));
 
         if ($upload->waiting()) {
-            $this->render($original, $this->previewPath($upload), $black, red: $found);
+            // The red boxes are drawn on the page, where the uploader can change them.
+            $this->render($original, $this->previewPath($upload), $black);
 
             return;
         }
-        $cover = $upload->cover ? $found : [];
+        $cover = $upload->cover ? $this->boxes($upload) : [];
         $black = array_merge($black, $cover);
         File::ensureDirectoryExists($this->dir($upload));
         $this->render($original, $this->dir($upload).'/image.png', $black);

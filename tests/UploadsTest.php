@@ -115,7 +115,8 @@ class UploadsTest extends TestCase
 
         $upload = Upload::first();
         $this->assertSame(['text.txt'], array_keys($upload->forClaude()), 'only the text until they decide');
-        $this->assertSame([[400, 40, 60, 60]], end($this->rendered)['red'], 'the preview shows the face in a red box');
+        $this->assertSame([], end($this->rendered)['red'], 'the page draws the red boxes');
+        $this->assertSame([[400, 40, 60, 60]], $response->json('uploads.0.boxes'));
 
         $this->actingAs($admin)->postJson($response->json('uploads.0.url.review'), ['cover' => true])->assertJson(['waiting' => false, 'covered' => 3]);
         $this->assertContains([400, 40, 60, 60], end($this->rendered)['black']);
@@ -123,6 +124,20 @@ class UploadsTest extends TestCase
 
         $this->actingAs($admin)->postJson($response->json('uploads.0.url.review'), ['cover' => false])->assertJson(['covered' => 2]);
         $this->assertNotContains([400, 40, 60, 60], end($this->rendered)['black'], 'not a student: left as it is');
+    }
+
+    public function test_the_uploader_can_remove_found_boxes_and_add_their_own(): void
+    {
+        $this->fakeImageTools('[[400, 40, 60, 60]]');
+        $admin = $this->admin();
+        $response = $this->actingAs($admin)->postJson('/uploads', ['student' => 0, 'files' => [UploadedFile::fake()->createWithContent('trip.jpg', 'jpeg bytes')]])->assertOk();
+
+        $this->actingAs($admin)->postJson($response->json('uploads.0.url.review'), ['cover' => true, 'boxes' => [[10, 20, 30, 40]]])->assertJson(['waiting' => false, 'covered' => 3]);
+        $black = end($this->rendered)['black'];
+        $this->assertContains([10, 20, 30, 40], $black);
+        $this->assertNotContains([400, 40, 60, 60], $black);
+
+        $this->actingAs($admin)->postJson($response->json('uploads.0.url.review'), ['cover' => true, 'boxes' => [[1, 2, 3]]])->assertUnprocessable();
     }
 
     public function test_an_image_with_student_information_whose_text_cant_be_read_isnt_given_to_claude(): void
