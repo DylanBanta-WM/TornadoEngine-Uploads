@@ -176,7 +176,7 @@ class UploadsTest extends TestCase
         $admin = $this->admin();
         $this->actingAs($admin)->post('/administration/uploads/logos', ['logo' => UploadedFile::fake()->createWithContent('logo.png', base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='))]);
         $this->assertCount(1, app(Uploads::class)->logoFiles());
-        $this->actingAs($admin)->get('/administration/uploads')->assertSee('Logos to look for in images');
+        $this->actingAs($admin)->get('/settings/uploads')->assertSee('Logos to look for in images');
 
         $this->fakeImageTools(logos: '[[700, 150, 120, 120, 0]]');
         $this->actingAs($admin)->postJson('/uploads', ['student' => 0, 'files' => [UploadedFile::fake()->createWithContent('poster.png', 'png bytes')]])
@@ -187,7 +187,7 @@ class UploadsTest extends TestCase
     {
         $admin = $this->admin();
         $this->assertSame(100, Uploads::maxMb());
-        $this->actingAs($admin)->from('/administration/uploads')->post('/administration/uploads', ['max_mb' => 2000])->assertSessionHasErrors('max_mb');
+        $this->actingAs($admin)->from('/settings/uploads')->post('/administration/uploads', ['max_mb' => 2000])->assertSessionHasErrors('max_mb');
         $this->actingAs($admin)->post('/administration/uploads', ['max_mb' => 1]);
         $this->assertSame(1, Uploads::maxMb());
 
