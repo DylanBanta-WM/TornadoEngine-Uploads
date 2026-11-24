@@ -139,6 +139,53 @@ class Uploads
             }
             $passes = [];
         }
+        [$black, $text] = $this->covering($passes);
+        $this->writeText($upload, $text, filtered: true);
+
+        // Faces, district logos and names read in the image: shown to the uploader, who decides what to cover.
+        $upload->findings ??= ['faces' => $this->faces($original), 'logos' => $this->logos($original)];
+        $upload->findings = [...$upload->findings, 'names' => array_values(array_unique($black, SORT_REGULAR))];
+        $black = [];
+
+        if ($upload->waiting()) {
+            // The boxes are drawn on the page, where the uploader can change them.
+            $this->render($original, $this->previewPath($upload), $black);
+
+            return;
+        }
+        $cover = $upload->cover ? $this->boxes($upload) : [];
+        $black = array_merge($black, $cover);
+        File::ensureDirectoryExists($this->dir($upload));
+        $this->render($original, $this->dir($upload).'/image.png', $black);
+        File::ensureDirectoryExists(dirname($this->previewPath($upload)));
+        copy($this->dir($upload).'/image.png', $this->previewPath($upload));
+        $upload->covered = count($black);
+    }
+
+    /**
+     * Covers what the broker would replace in an image (a screenshot, say) in black, for Claude.
+     *
+     * @return array{covered: int, text: string} how many boxes, and its text with the broker's placeholders
+     */
+    public function cover(string $original, string $output): array
+    {
+        if ($this->broker->notReady() !== null) {
+            throw new RuntimeException((string) $this->broker->notReady());
+        }
+        [$black, $text] = $this->covering($this->words($original));
+        $black = array_values(array_unique($black, SORT_REGULAR));
+        $this->render($original, $output, $black);
+
+        return ['covered' => count($black), 'text' => $text];
+    }
+
+    /**
+     * The boxes to cover in an image (words, or whole lines, the broker would change), and its text with them replaced.
+     *
+     * @return array{0: list<array{int, int, int, int}>, 1: string}
+     */
+    private function covering(array $passes): array
+    {
         $lines = array_merge(...($passes ?: [[]]));
         $words = array_merge(...($lines ?: [[]]));
         $filteredWords = $this->broker->filterEach(array_column($words, 'text'));
@@ -177,26 +224,8 @@ class Uploads
             }
             $offset += count($pass);
         }
-        $this->writeText($upload, implode("\n", array_slice($filteredLines, $best['from'] ?? 0, count($best['lines'] ?? []))), filtered: true);
 
-        // Faces, district logos and names read in the image: shown to the uploader, who decides what to cover.
-        $upload->findings ??= ['faces' => $this->faces($original), 'logos' => $this->logos($original)];
-        $upload->findings = [...$upload->findings, 'names' => array_values(array_unique($black, SORT_REGULAR))];
-        $black = [];
-
-        if ($upload->waiting()) {
-            // The boxes are drawn on the page, where the uploader can change them.
-            $this->render($original, $this->previewPath($upload), $black);
-
-            return;
-        }
-        $cover = $upload->cover ? $this->boxes($upload) : [];
-        $black = array_merge($black, $cover);
-        File::ensureDirectoryExists($this->dir($upload));
-        $this->render($original, $this->dir($upload).'/image.png', $black);
-        File::ensureDirectoryExists(dirname($this->previewPath($upload)));
-        copy($this->dir($upload).'/image.png', $this->previewPath($upload));
-        $upload->covered = count($black);
+        return [$black, implode("\n", array_slice($filteredLines, $best['from'] ?? 0, count($best['lines'] ?? [])))];
     }
 
     private function writeText(Upload $upload, ?string $text, bool $filtered = false): void
